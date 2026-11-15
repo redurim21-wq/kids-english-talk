@@ -97,7 +97,8 @@
     <!-- 로딩 표시 (첫 내용이 도착하기 전까지만 보임) -->
     <div id="loadingBox" class="hidden py-8 text-center space-y-2">
       <div class="inline-block w-7 h-7 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-      <p class="text-xs text-slate-500 font-medium">아이 눈높이에 맞는 쉬운 영어를 고르고 있어요… <span id="loadingTimer">0.0초</span></p>
+      <p class="text-xs text-slate-500 font-medium"><span id="loadingMsg">서버에 연결하는 중…</span> <span id="loadingTimer">0.0초</span></p>
+      <button type="button" onclick="stopGenerating()" class="text-[11px] text-slate-500 underline">중지하기</button>
     </div>
 
     <!-- 에러 메시지 -->
@@ -556,7 +557,7 @@ ${LEVELS[level].rules}
         responseMimeType: 'application/json',
         responseSchema: RESPONSE_SCHEMA,
         temperature: 0.5,
-        maxOutputTokens: 2048
+        maxOutputTokens: 4096
       };
       if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
       return {
@@ -566,34 +567,108 @@ ${LEVELS[level].rules}
       };
     }
 
-    // ───────── Gemini 호출 (스트리밍) ─────────
-    // 생각(thinking) 단계를 최소로 줄이는 설정을 먼저 시도하고,
-    // 모델이 그 설정을 모르면 다른 방식 → 설정 없이 순서로 자동 재시도합니다.
-    async function callGemini(situation, level, onText, signal) {
-      const key = getKey();
-      const model = getModel();
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`;
+    // ───────── Gemini 호출 ─────────
+    // 1) 스트리밍으로 요청하고, 20초 동안 아무 데이터도 오지 않으면 멈춘 것으로 보고 끊습니다.
+    // 2) 그러면 일반 방식(한 번에 받기)으로 한 번 더 요청합니다 (최대 45초).
+    // 3) 모델이 '생각 최소화' 설정을 모르면 다른 설정으로 자동 재시도합니다.
+    const STREAM_STALL_MS = 20000;
+    const PLAIN_TIMEOUT_MS = 45000;
+
+    function linkedController(parentSignal) {
+      const c = new AbortController();
+      if (parentSignal.aborted) c.abort();
+      else parentSignal.addEventListener('abort', () => c.abort(), { once: true });
+      return c;
+    }
+
+    async function callGemini(situation, level, onText, signal, onStage) {
       const thinkingOptions = [{ thinkingLevel: 'minimal' }, { thinkingBudget: 0 }, null];
       let lastErr = null;
-
       for (const tc of thinkingOptions) {
+        try {
+          return await requestOnce({ situation, level, tc, stream: true, onText, signal, onStage });
+        } catch (e) {
+          if (signal.aborted) throw e;
+          if (e.retryThinking) { lastErr = e; continue; }
+          if (e.stalled) {
+            onStage('retry');
+            try {
+              return await requestOnce({ situation, level, tc, stream: false, onText, signal, onStage });
+            } catch (e2) {
+              if (signal.aborted) throw e2;
+              if (e2.retryThinking) { lastErr = e2; continue; }
+              throw e2;
+            }
+          }
+          throw e;
+        }
+      }
+      throw lastErr;
+    }
+
+    async function requestOnce({ situation, level, tc, stream, onText, signal, onStage }) {
+      const key = getKey();
+      const model = getModel();
+      const base = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`;
+      const url = stream
+        ? `${base}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`
+        : `${base}:generateContent?key=${encodeURIComponent(key)}`;
+
+      const ctrl = linkedController(signal);
+      const limit = stream ? STREAM_STALL_MS : PLAIN_TIMEOUT_MS;
+      let timedOut = false;
+      let timer = null;
+      const arm = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, limit);
+      };
+
+      arm();
+      onStage(stream ? 'connect' : 'retry');
+      try {
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(buildBody(situation, tc, level)),
-          signal
+          signal: ctrl.signal
         });
+
         if (!res.ok) {
           let msg = '';
           try { const j = await res.json(); msg = j.error?.message || ''; } catch (e) {}
-          lastErr = new Error(msg || `HTTP ${res.status}`);
-          lastErr.status = res.status;
-          if (res.status === 400 && /think/i.test(msg)) continue; // 설정만 바꿔서 재시도
-          throw lastErr;
+          const err = new Error(msg || `HTTP ${res.status}`);
+          err.status = res.status;
+          if (res.status === 400 && /think/i.test(msg)) err.retryThinking = true;
+          throw err;
         }
-        return await readSSE(res, onText);
+
+        if (stream) {
+          onStage('receive');
+          arm();
+          return await readSSE(res, (t) => { arm(); onText(t); });
+        }
+
+        const j = await res.json();
+        const cand = j.candidates?.[0];
+        const text = (cand?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+        if (!text) throw new Error('빈 응답이 왔어요' + (cand?.finishReason ? ` (${cand.finishReason})` : '') + '. 한 번 더 눌러 주세요.');
+        onText(text);
+        return text;
+      } catch (e) {
+        if (timedOut && !signal.aborted) {
+          if (stream) {
+            const err = new Error('스트리밍 응답이 멈췄어요');
+            err.stalled = true;
+            throw err;
+          }
+          const err = new Error(`${PLAIN_TIMEOUT_MS / 1000}초 동안 응답이 오지 않았어요.\n→ 구글 서버가 붐비는 중일 수 있어요. 잠시 뒤 다시 누르거나, ⚙️ 설정에서 모델 이름을 flash-lite 계열로 바꿔 보세요.`);
+          err.timeout = true;
+          throw err;
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
       }
-      throw lastErr;
     }
 
     async function readSSE(res, onText) {
@@ -698,7 +773,7 @@ ${LEVELS[level].rules}
             $('loadingBox').classList.add('hidden');
             scrollToResult();
           }
-        }, controller.signal);
+        }, controller.signal, setStage);
 
         if (currentController !== controller) return;
         const finalData = parsePartialJSON(full);
@@ -720,6 +795,27 @@ ${LEVELS[level].rules}
           $('loadingBox').classList.add('hidden');
         }
       }
+    }
+
+    // ───────── 진행 단계 표시 & 중지 ─────────
+    const STAGE_TEXT = {
+      connect: '서버에 연결하는 중…',
+      receive: '답변을 받는 중…',
+      retry: '응답이 멈춰서 다시 요청하는 중…'
+    };
+    function setStage(stage) {
+      $('loadingMsg').textContent = STAGE_TEXT[stage] || '';
+      if (stage === 'retry' && !$('resultArea').classList.contains('hidden')) {
+        $('loadingBox').classList.remove('hidden');
+      }
+    }
+
+    function stopGenerating() {
+      abortCurrent();
+      setBusy(false);
+      stopTimer();
+      $('loadingBox').classList.add('hidden');
+      showToast('중지했어요. 다시 누르면 새로 요청해요.');
     }
 
     // ───────── 화면 도우미 ─────────
@@ -848,4 +944,3 @@ ${LEVELS[level].rules}
   </script>
 </body>
 </html>
-
