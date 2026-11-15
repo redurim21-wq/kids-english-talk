@@ -1,1 +1,851 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>아이와 영어로 말해요 (NGSL 721)</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png?v=2" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png?v=2" />
+  <meta name="theme-color" content="#4f46e5" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="아이영어톡" />
+  <!-- 구글 API 서버에 미리 연결해 두어 첫 요청을 조금 더 빠르게 -->
+  <link rel="preconnect" href="https://generativelanguage.googleapis.com" crossorigin />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
+    body {
+      font-family: 'Noto Sans KR', sans-serif;
+      background-color: #f8fafc;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="text-slate-800 pb-16">
+
+  <!-- 상단 헤더 -->
+  <header class="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200 px-4 py-3">
+    <div class="max-w-lg mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">💬</span>
+        <div>
+          <h1 class="font-bold text-base text-slate-900 leading-tight">아이영어톡</h1>
+          <p class="text-[11px] text-indigo-600 font-medium">NGSL 721 · 초등 기초 회화</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <button onclick="resetAll()" class="text-xs bg-rose-50 text-rose-700 font-semibold px-2.5 py-1.5 rounded-lg active:bg-rose-100">
+          ↺ 초기화
+        </button>
+        <button onclick="shareApiKey()" class="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1.5 rounded-lg active:bg-indigo-100">
+          🔗 공유
+        </button>
+        <button onclick="toggleModal(true)" class="text-xs bg-slate-100 text-slate-700 font-semibold px-2.5 py-1.5 rounded-lg active:bg-slate-200">
+          ⚙️ 설정
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 메인 컨테이너 -->
+  <main class="max-w-lg mx-auto px-4 pt-4 space-y-4">
+
+    <!-- 입력 카드 -->
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <label for="situationInput" class="text-xs font-bold text-slate-500">아이에게 어떤 말을 하고 싶나요?</label>
+        <button id="micBtn" onclick="startVoiceInput()" class="text-xs flex items-center gap-1 text-indigo-600 font-semibold bg-indigo-50 px-2.5 py-1 rounded-lg">
+          <span>🎙️</span> <span id="micLabel">말로 입력</span>
+        </button>
+      </div>
+
+      <textarea id="situationInput" rows="2"
+        placeholder="예: 유튜브 20분만 보고 영어 숙제 먼저 하자"
+        class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
+
+      <!-- 생활 상황 탭 (누르면 아래 문장 목록이 바뀜) -->
+      <div class="space-y-2">
+        <p class="text-xs font-bold text-slate-500">자주 쓰는 상황에서 골라 보세요</p>
+        <div id="sceneTabs" class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1"></div>
+        <div id="sceneList" class="space-y-1.5"></div>
+      </div>
+
+      <!-- 대화 수준 선택 -->
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-bold text-slate-500 shrink-0">대화 수준</span>
+        <div class="flex-1 grid grid-cols-2 bg-slate-100 rounded-xl p-1 gap-1">
+          <button type="button" id="levelBtn1" onclick="setLevel(1)" class="text-xs font-semibold py-2 rounded-lg">
+            Level 1 <span class="font-normal">· 첫걸음</span>
+          </button>
+          <button type="button" id="levelBtn2" onclick="setLevel(2)" class="text-xs font-semibold py-2 rounded-lg">
+            Level 2 <span class="font-normal">· 한 단계 위</span>
+          </button>
+        </div>
+      </div>
+      <p id="levelHint" class="text-[11px] text-slate-500 -mt-1"></p>
+
+      <button id="generateBtn" onclick="generateExpressions()"
+        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-sm active:scale-[0.99] transition">
+        <span>✨ 영어 표현 & 아이 답변 추천받기</span>
+      </button>
+    </section>
+
+    <!-- 로딩 표시 (첫 내용이 도착하기 전까지만 보임) -->
+    <div id="loadingBox" class="hidden py-8 text-center space-y-2">
+      <div class="inline-block w-7 h-7 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+      <p class="text-xs text-slate-500 font-medium">아이 눈높이에 맞는 쉬운 영어를 고르고 있어요… <span id="loadingTimer">0.0초</span></p>
+    </div>
+
+    <!-- 에러 메시지 -->
+    <div id="errorBox" class="hidden bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl p-3.5 leading-relaxed"></div>
+
+    <!-- 결과 영역 -->
+    <div id="resultArea" class="hidden space-y-5">
+
+      <!-- 진행 상태 -->
+      <p id="statusLine" class="text-[11px] text-slate-500"></p>
+
+      <!-- 상황 요약 -->
+      <div id="summaryBox" class="hidden bg-indigo-50/70 border border-indigo-100 rounded-xl px-3.5 py-2.5 text-xs text-indigo-900 font-medium">
+        📌 <span id="situationSummary"></span>
+      </div>
+
+      <!-- 1. 부모 표현 3가지 -->
+      <section class="space-y-2.5">
+        <h2 class="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+          <span>🗣️</span> 이렇게 말해 보세요 (3가지 톤)
+        </h2>
+        <div id="parentCards" class="space-y-2.5"></div>
+      </section>
+
+      <!-- 2. 핵심 단어 -->
+      <section class="bg-white rounded-2xl border border-slate-200 p-4 space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-slate-800">📚 핵심 어휘</h2>
+          <span class="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-semibold">NGSL 721 포함 표시</span>
+        </div>
+        <div id="wordChips" class="flex flex-wrap gap-2"></div>
+      </section>
+
+      <!-- 3. 아이의 예상 답변 -->
+      <section class="space-y-2.5">
+        <h2 class="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+          <span>🧒</span> 아이는 이렇게 대답할 수 있어요
+        </h2>
+        <div id="childCards" class="space-y-3"></div>
+      </section>
+
+      <button onclick="resetAll()" class="w-full bg-white border border-slate-300 text-slate-700 font-semibold py-3 rounded-xl active:bg-slate-50">
+        ↺ 지우고 새 상황 입력하기
+      </button>
+    </div>
+  </main>
+
+  <!-- 설정 모달 -->
+  <div id="apiModal" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-5 space-y-4 shadow-xl">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-base text-slate-900">⚙️ 설정</h3>
+        <button onclick="toggleModal(false)" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="apiKeyInput" class="text-xs font-bold text-slate-600">🔑 Gemini API 키</label>
+        <input id="apiKeyInput" type="password" placeholder="AIzaSy..." autocomplete="off"
+          class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <p class="text-[11px] text-slate-500 leading-relaxed">Google AI Studio에서 발급받은 키를 넣어 주세요. 이 기기의 브라우저에만 저장됩니다.</p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="modelInput" class="text-xs font-bold text-slate-600">🤖 모델 이름</label>
+        <input id="modelInput" type="text" placeholder="gemini-3.8-flash" autocomplete="off" autocapitalize="off" spellcheck="false"
+          class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <p class="text-[11px] text-slate-500 leading-relaxed">비워 두면 기본값을 씁니다. 더 빠른 응답이 필요하면 AI Studio 모델 목록에서 이름에 <b>flash-lite</b>가 붙은 모델을 넣어 보세요.</p>
+      </div>
+
+      <div class="flex gap-2">
+        <button onclick="saveApiKey()" class="flex-1 bg-indigo-600 text-white font-bold py-2.5 rounded-xl text-sm">저장하기</button>
+        <button onclick="toggleModal(false)" class="px-4 bg-slate-100 text-slate-700 font-semibold py-2.5 rounded-xl text-sm">닫기</button>
+      </div>
+
+      <button onclick="clearCache()" class="w-full text-[11px] text-slate-500 underline">저장된 추천 결과 모두 지우기</button>
+    </div>
+  </div>
+
+  <!-- 토스트 -->
+  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs px-4 py-2.5 rounded-xl shadow-lg max-w-[90vw] text-center"></div>
+
+  <script>
+    // ───────── 기본 설정 ─────────
+    const DEFAULT_MODEL = 'gemini-3.8-flash';
+    const LS = { key: 'gemini_api_key', model: 'gemini_model', cache: 'ngsl_result_cache_v2' };
+    const CACHE_LIMIT = 40;
+
+    const $ = (id) => document.getElementById(id);
+    const input = $('situationInput');
+
+    let currentController = null;   // 진행 중인 요청 (초기화 시 취소용)
+    let recognition = null;
+    let isListening = false;
+    let timerId = null;
+    let startedAt = 0;
+
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+    function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+    const getKey = () => (lsGet(LS.key) || '').trim();
+    const getModel = () => (lsGet(LS.model) || '').trim() || DEFAULT_MODEL;
+
+    // ───────── 공유 링크로 받은 키 자동 저장 ─────────
+    (function importKeyFromUrl() {
+      let key = null;
+      const hash = location.hash.replace(/^#/, '');
+      const hp = new URLSearchParams(hash);
+      key = hp.get('k') || hp.get('key');
+      if (!key) {
+        const qp = new URLSearchParams(location.search);
+        key = qp.get('k') || qp.get('key') || qp.get('apikey');
+      }
+      if (key) {
+        lsSet(LS.key, key.trim());
+        history.replaceState(null, '', location.pathname); // 주소창에서 키 지우기
+        setTimeout(() => showToast('API 키가 자동으로 저장되었어요 ✅'), 300);
+      }
+    })();
+
+    function shareApiKey() {
+      const key = getKey();
+      if (!key) { toggleModal(true); showToast('먼저 키를 저장해 주세요.'); return; }
+      // # 뒤에 넣으면 GitHub 서버로 전송되지 않습니다
+      const url = location.origin + location.pathname + '#k=' + encodeURIComponent(key);
+      if (navigator.share) {
+        navigator.share({ title: '아이영어톡', text: '이 링크를 열면 바로 설정돼요', url }).catch(() => {});
+      } else if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(
+          () => showToast('링크가 복사되었어요. 카카오톡에 붙여넣어 보내세요.'),
+          () => prompt('아래 링크를 복사하세요', url)
+        );
+      } else {
+        prompt('아래 링크를 복사하세요', url);
+      }
+    }
+
+    // ───────── 설정 모달 ─────────
+    function toggleModal(show) {
+      const modal = $('apiModal');
+      if (show) {
+        $('apiKeyInput').value = getKey();
+        $('modelInput').value = lsGet(LS.model) || '';
+        modal.classList.remove('hidden');
+      } else {
+        modal.classList.add('hidden');
+      }
+    }
+
+    function saveApiKey() {
+      const key = $('apiKeyInput').value.trim();
+      const model = $('modelInput').value.trim();
+      if (!key) { showToast('API 키를 입력해 주세요.'); return; }
+      lsSet(LS.key, key);
+      if (model) lsSet(LS.model, model); else lsDel(LS.model);
+      toggleModal(false);
+      showToast('저장했어요 ✅');
+    }
+
+    // ───────── 결과 캐시 (같은 상황은 즉시 표시) ─────────
+    function cacheRead() { try { return JSON.parse(lsGet(LS.cache) || '{}'); } catch (e) { return {}; } }
+    function cacheGet(k) { return cacheRead()[k]?.data || null; }
+    function cacheSet(k, data) {
+      const c = cacheRead();
+      c[k] = { data, t: Date.now() };
+      const keys = Object.keys(c).sort((a, b) => c[b].t - c[a].t);
+      keys.slice(CACHE_LIMIT).forEach(x => delete c[x]);
+      lsSet(LS.cache, JSON.stringify(c));
+    }
+    function clearCache() { lsDel(LS.cache); showToast('저장된 결과를 지웠어요.'); }
+
+    // ───────── 초기화 ─────────
+    function resetAll() {
+      abortCurrent();
+      if ('speechSynthesis' in window) speechSynthesis.cancel();
+      if (isListening && recognition) { try { recognition.stop(); } catch (e) {} }
+      input.value = '';
+      clearResult();
+      hideError();
+      $('loadingBox').classList.add('hidden');
+      setBusy(false);
+      stopTimer();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      showToast('처음 상태로 돌아왔어요');
+    }
+
+    function abortCurrent() {
+      if (currentController) { currentController.abort(); currentController = null; }
+    }
+
+    // ───────── 생활 상황 탭 ─────────
+    // 탭이나 문장을 바꾸고 싶으면 이 목록만 고치면 됩니다.
+    const SCENES = [
+      { tab: '🌅 아침 준비', items: [
+        '일어날 시간이야. 5분만 더 자고 일어나자',
+        '옷 입고 양말도 신자. 오늘은 뭐 입을래?',
+        '아침 먹고 가방 다 챙겼는지 확인하자',
+        '늦겠다! 신발 신고 빨리 나가자'
+      ]},
+      { tab: '🍚 식사', items: [
+        '손 씻고 와. 밥 먹을 시간이야',
+        '채소도 딱 한 입만 먹어 볼까?',
+        '밥 먹을 때는 TV 끄고 먹자',
+        '다 먹은 그릇은 싱크대에 갖다 놓자'
+      ]},
+      { tab: '📚 공부·숙제', items: [
+        '오늘 숙제 뭐 있는지 같이 볼까?',
+        '10분만 집중해서 하고 쉬자',
+        '모르는 문제 있으면 엄마한테 물어봐',
+        '숙제 다 했네! 정말 잘했어'
+      ]},
+      { tab: '📺 놀이·미디어', items: [
+        '유튜브는 20분만 보고 끄기로 약속하자',
+        '타이머 울리면 게임 그만하는 거야',
+        '밖에 나가서 자전거 탈래?',
+        '같이 보드게임 할 사람?'
+      ]},
+      { tab: '🧸 정리정돈', items: [
+        '놀고 난 장난감은 제자리에 넣자',
+        '누가 더 빨리 치우나 시합하자',
+        '벗은 옷은 빨래 바구니에 넣어 줘',
+        '책상 정리하고 내일 준비물 챙기자'
+      ]},
+      { tab: '🛁 씻기·잠자리', items: [
+        '목욕할 시간이야. 장난감은 하나만 가져가자',
+        '이 닦고 잠옷 갈아입자',
+        '책 한 권만 읽고 불 끄자',
+        '잘 자. 사랑해. 내일 또 재미있게 놀자'
+      ]},
+      { tab: '🛒 외출', items: [
+        '마트에서 과자는 하나만 고르는 거야',
+        '차 타면 안전벨트부터 매자',
+        '길 건널 때는 손 꼭 잡자',
+        '놀이터에서 10분만 더 놀고 집에 가자'
+      ]},
+      { tab: '💛 마음·대화', items: [
+        '오늘 학교에서 뭐가 제일 재미있었어?',
+        '속상했구나. 무슨 일 있었는지 말해 줄래?',
+        '동생한테 먼저 미안하다고 말해 볼까?',
+        '끝까지 해낸 거 정말 자랑스러워'
+      ]}
+    ];
+
+    let sceneIndex = Math.min(parseInt(lsGet('scene_tab') || '0', 10) || 0, SCENES.length - 1);
+
+    function renderScenes() {
+      $('sceneTabs').innerHTML = SCENES.map((s, i) => `
+        <button type="button" onclick="selectScene(${i})"
+          class="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border ${i === sceneIndex
+            ? 'bg-indigo-600 text-white border-indigo-600'
+            : 'bg-white text-slate-600 border-slate-200 active:bg-slate-100'}">${escapeHtml(s.tab)}</button>
+      `).join('');
+
+      $('sceneList').innerHTML = SCENES[sceneIndex].items.map((text, i) => `
+        <button type="button" onclick="pickScene(${i})"
+          class="w-full text-left text-sm text-slate-700 bg-slate-50 active:bg-indigo-50 border border-slate-200 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2">
+          <span>${escapeHtml(text)}</span><span class="text-indigo-500 shrink-0">✨</span>
+        </button>
+      `).join('');
+    }
+
+    function selectScene(i) {
+      sceneIndex = i;
+      lsSet('scene_tab', String(i));
+      renderScenes();
+    }
+
+    function pickScene(i) {
+      quickFill(SCENES[sceneIndex].items[i]);
+    }
+
+    // 문장을 누르면 입력칸에 넣고 바로 생성
+    function quickFill(text) {
+      input.value = text;
+      generateExpressions();
+    }
+
+    // ───────── 음성 입력 (한국어) ─────────
+    function startVoiceInput() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { showToast('이 브라우저는 음성 입력을 지원하지 않아요. 키보드의 🎤를 이용해 주세요.'); return; }
+      if (isListening && recognition) { recognition.stop(); return; }
+
+      recognition = new SR();
+      recognition.lang = 'ko-KR';
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      recognition.onresult = (e) => {
+        let text = '';
+        for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
+        input.value = text;
+      };
+      recognition.onerror = (e) => {
+        if (e.error === 'not-allowed') showToast('마이크 권한을 허용해 주세요.');
+        else if (e.error !== 'no-speech' && e.error !== 'aborted') showToast('음성 인식 오류: ' + e.error);
+      };
+      recognition.onend = () => {
+        isListening = false;
+        $('micLabel').textContent = '말로 입력';
+      };
+
+      try {
+        recognition.start();
+        isListening = true;
+        $('micLabel').textContent = '듣는 중… (탭하면 끝)';
+      } catch (e) {
+        showToast('음성 입력을 시작할 수 없어요.');
+      }
+    }
+
+    // ───────── 원어민 음성 (TTS) ─────────
+    let enVoice = null;
+    function pickVoice() {
+      const vs = speechSynthesis.getVoices();
+      enVoice =
+        vs.find(v => v.lang === 'en-US' && /Samantha|Google US English|Aaron|Nicky/i.test(v.name)) ||
+        vs.find(v => v.lang === 'en-US') ||
+        vs.find(v => (v.lang || '').toLowerCase().startsWith('en')) ||
+        null;
+    }
+    if ('speechSynthesis' in window) {
+      pickVoice();
+      speechSynthesis.onvoiceschanged = pickVoice;
+    }
+
+    function speakText(text, rate) {
+      if (!('speechSynthesis' in window)) { showToast('이 브라우저는 음성 재생을 지원하지 않아요.'); return; }
+      speechSynthesis.cancel();
+      setTimeout(() => {
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'en-US';
+        if (enVoice) u.voice = enVoice;
+        u.rate = rate || 1;
+        speechSynthesis.speak(u);
+      }, 60);
+    }
+
+    // data-speak 속성이 있는 버튼은 모두 여기서 처리 (따옴표가 있어도 안전)
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-speak]');
+      if (btn) speakText(btn.dataset.speak, parseFloat(btn.dataset.rate) || 1);
+    });
+
+    // ───────── 프롬프트 & 응답 형식 ─────────
+    // ───────── 대화 수준 지침 ─────────
+    // 아이 수준에 맞게 고치고 싶으면 아래 LEVELS 안의 문장만 바꾸면 됩니다.
+    const LEVELS = {
+      1: {
+        name: 'Level 1 · 첫걸음',
+        hint: '부모 3~7단어, 아이 1~4단어. 영어를 막 시작한 아이용',
+        rules: `[수준: Level 1 · 첫걸음]
+- 영어 노출이 거의 없는 7~9세 아이(Pre-A1). 듣자마자 알아듣고 따라 할 수 있는 문장.
+- 부모 문장: 3~7단어, 문장 1개(꼭 필요하면 아주 짧은 문장 2개).
+- 현재형만. 명령문(Wash your hands.), Let's ~., 짧은 질문(Are you ready? / Do you want ~?)만.
+- 쓰지 말 것: 과거·미래 시제, if, 관계사, 수동태, could/would/should, 관용구.
+- 기본 동사 위주: be, have, go, come, eat, drink, wash, brush, sit, stop, look, put, take, give, get, make, play, read, watch, sleep, clean up, put on, take off, want, like, help, try, finish, wait, open, close, turn off.
+- 생활 명사(hands, teeth, shoes, toys, bed, book, TV, bag)는 한 문장에 1~2개만.
+- 아이 답변: 1~4단어. 예: Okay! / One more, please. / I'm done. / Not now. / Help me, please.
+- 부모 후속 반응: 3~6단어.
+- 예: "Could you put your toys back where they belong?" → "Toys in the box, please."`
+      },
+      2: {
+        name: 'Level 2 · 한 단계 위',
+        hint: '부모 5~10단어, 아이 3~7단어. 이유·시간·간단한 과거도 사용',
+        rules: `[수준: Level 2 · 한 단계 위]
+- 쉬운 영어 문장에 익숙해진 8~10세 아이(A1). Level 1보다 조금 길고 내용이 있지만, 여전히 초등 저학년 교과서 수준.
+- 부모 문장: 5~10단어, 문장 1~2개.
+- 쓸 수 있는 것: 현재형, 현재진행형(What are you doing?), can / can't, 간단한 과거형 질문(What did you eat? / Did you have fun?), 가까운 미래(We will go after lunch.), and / but / because / after / before로 짧게 잇기.
+- 기본 구동사 허용: clean up, put away, turn off, get up, put on, take off, come back.
+- 쓰지 말 것: could/would/should를 쓴 돌려 말하기, 관계사(that/which), 수동태, 관용구, 길게 이어지는 문장.
+- 아이 답변: 3~7단어의 완전한 문장. 예: I want to play more. / Can I watch one more? / I don't like carrots. / I had fun with Minji.
+- 부모 후속 반응: 4~8단어.
+- 예: "Let's limit your screen time to twenty minutes." → "You can watch for 20 minutes. Then homework, okay?"`
+      }
+    };
+
+    function buildPrompt(level) {
+      return `너는 한국 부모가 초등학생 자녀와 쉬운 영어로 대화하도록 돕는 코치야.
+모든 영어는 NGSL(New General Service List) 기초 721개 단어를 중심으로 쓰고, 아래 수준 규칙을 반드시 지켜. 3가지 톤도 같은 수준을 지키고, 톤은 말투(다정하게/단호하게/재미있게)로만 구분해.
+
+${LEVELS[level].rules}
+
+[출력 항목]
+- situation_summary: 상황을 한국어 한 줄로 요약.
+- parent_expressions: 정확히 3개. korean은 자연스러운 한국어 뜻. pronunciation_tip은 한국어 한 문장(예: "wash는 '와쉬', 끝을 짧게 '쉬'로.").
+- key_words: 4~5개. 위 문장에 나온 핵심 단어. meaning은 짧은 한국어 뜻, is_ngsl_721은 NGSL 기초 721개 단어에 속하면 true.
+- child_responses: 정확히 3개. type은 반응 유형(예: 좋아요, 미루기, 싫어요, 질문). child_korean, parent_reply_ko는 뜻.
+- 설명은 짧게, JSON만 출력해.`;
+    }
+
+    // ───────── 레벨 선택 ─────────
+    function getLevel() { return lsGet('talk_level') === '2' ? 2 : 1; }
+
+    function renderLevel() {
+      const lv = getLevel();
+      [1, 2].forEach(n => {
+        $('levelBtn' + n).className = 'text-xs font-semibold py-2 rounded-lg ' +
+          (n === lv ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500');
+      });
+      $('levelHint').textContent = LEVELS[lv].hint;
+    }
+
+    function setLevel(n) {
+      if (getLevel() === n) return;
+      lsSet('talk_level', String(n));
+      renderLevel();
+      // 결과를 보고 있던 중이면 같은 상황을 새 레벨로 바로 다시 보여주기
+      if (!$('resultArea').classList.contains('hidden') && input.value.trim()) {
+        generateExpressions();
+      } else {
+        showToast(LEVELS[n].name + '(으)로 바꿨어요');
+      }
+    }
+
+
+    const str = { type: 'STRING' };
+    const RESPONSE_SCHEMA = {
+      type: 'OBJECT',
+      properties: {
+        situation_summary: str,
+        parent_expressions: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: { tone: str, english: str, korean: str, pronunciation_tip: str },
+            required: ['tone', 'english', 'korean', 'pronunciation_tip'],
+            propertyOrdering: ['tone', 'english', 'korean', 'pronunciation_tip']
+          }
+        },
+        key_words: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: { word: str, meaning: str, is_ngsl_721: { type: 'BOOLEAN' } },
+            required: ['word', 'meaning', 'is_ngsl_721'],
+            propertyOrdering: ['word', 'meaning', 'is_ngsl_721']
+          }
+        },
+        child_responses: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: { type: str, child_english: str, child_korean: str, parent_reply_en: str, parent_reply_ko: str },
+            required: ['type', 'child_english', 'child_korean', 'parent_reply_en', 'parent_reply_ko'],
+            propertyOrdering: ['type', 'child_english', 'child_korean', 'parent_reply_en', 'parent_reply_ko']
+          }
+        }
+      },
+      required: ['situation_summary', 'parent_expressions', 'key_words', 'child_responses'],
+      propertyOrdering: ['situation_summary', 'parent_expressions', 'key_words', 'child_responses']
+    };
+
+    function buildBody(situation, thinkingConfig, level) {
+      const generationConfig = {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        temperature: 0.5,
+        maxOutputTokens: 2048
+      };
+      if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
+      return {
+        systemInstruction: { parts: [{ text: buildPrompt(level) }] },
+        contents: [{ role: 'user', parts: [{ text: '상황: ' + situation }] }],
+        generationConfig
+      };
+    }
+
+    // ───────── Gemini 호출 (스트리밍) ─────────
+    // 생각(thinking) 단계를 최소로 줄이는 설정을 먼저 시도하고,
+    // 모델이 그 설정을 모르면 다른 방식 → 설정 없이 순서로 자동 재시도합니다.
+    async function callGemini(situation, level, onText, signal) {
+      const key = getKey();
+      const model = getModel();
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`;
+      const thinkingOptions = [{ thinkingLevel: 'minimal' }, { thinkingBudget: 0 }, null];
+      let lastErr = null;
+
+      for (const tc of thinkingOptions) {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildBody(situation, tc, level)),
+          signal
+        });
+        if (!res.ok) {
+          let msg = '';
+          try { const j = await res.json(); msg = j.error?.message || ''; } catch (e) {}
+          lastErr = new Error(msg || `HTTP ${res.status}`);
+          lastErr.status = res.status;
+          if (res.status === 400 && /think/i.test(msg)) continue; // 설정만 바꿔서 재시도
+          throw lastErr;
+        }
+        return await readSSE(res, onText);
+      }
+      throw lastErr;
+    }
+
+    async function readSSE(res, onText) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let full = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (!payload) continue;
+          let j;
+          try { j = JSON.parse(payload); } catch (e) { continue; }
+          if (j.error) throw new Error(j.error.message || 'API 오류');
+          const parts = j.candidates?.[0]?.content?.parts || [];
+          for (const p of parts) {
+            if (p.thought) continue;
+            if (typeof p.text === 'string') { full += p.text; onText(full); }
+          }
+        }
+      }
+      return full;
+    }
+
+    // 아직 다 오지 않은 JSON에서도 완성된 부분까지만 꺼내 쓰기
+    function parsePartialJSON(text) {
+      const s = text.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '');
+      try { return JSON.parse(s); } catch (e) {}
+      const stack = [];
+      const cuts = [];
+      let inStr = false, esc = false;
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (c === '\\') esc = true;
+          else if (c === '"') inStr = false;
+          continue;
+        }
+        if (c === '"') inStr = true;
+        else if (c === '{') stack.push('}');
+        else if (c === '[') stack.push(']');
+        else if (c === '}' || c === ']') {
+          stack.pop();
+          cuts.push({ i, closers: stack.slice().reverse().join('') });
+        }
+      }
+      for (let k = cuts.length - 1; k >= 0 && k >= cuts.length - 8; k--) {
+        try { return JSON.parse(s.slice(0, cuts[k].i + 1) + cuts[k].closers); } catch (e) {}
+      }
+      return null;
+    }
+
+    // ───────── 메인 동작 ─────────
+    async function generateExpressions() {
+      const situation = input.value.trim();
+      if (!situation) { showToast('상황을 먼저 입력해 주세요.'); input.focus(); return; }
+      if (!getKey()) { toggleModal(true); showToast('먼저 API 키를 저장해 주세요.'); return; }
+
+      hideError();
+      const level = getLevel();
+      const cacheKey = getModel() + '|L' + level + '|' + situation;
+      const cached = cacheGet(cacheKey);
+      if (cached) {
+        abortCurrent();
+        renderResult(cached);
+        $('statusLine').textContent = `⚡ ${LEVELS[level].name} · 전에 만든 결과를 바로 불러왔어요`;
+        scrollToResult();
+        return;
+      }
+
+      abortCurrent();
+      const controller = new AbortController();
+      currentController = controller;
+
+      clearResult();
+      setBusy(true);
+      $('loadingBox').classList.remove('hidden');
+      startTimer();
+
+      let lastSig = '';
+      let shown = false;
+
+      try {
+        const full = await callGemini(situation, level, (text) => {
+          if (currentController !== controller) return;
+          const d = parsePartialJSON(text);
+          if (!d) return;
+          const sig = JSON.stringify(d);
+          if (sig === lastSig) return;
+          lastSig = sig;
+          renderResult(d);
+          if (!shown) {
+            shown = true;
+            $('loadingBox').classList.add('hidden');
+            scrollToResult();
+          }
+        }, controller.signal);
+
+        if (currentController !== controller) return;
+        const finalData = parsePartialJSON(full);
+        if (!finalData || !Array.isArray(finalData.parent_expressions) || !finalData.parent_expressions.length) {
+          throw new Error('응답을 해석할 수 없어요. 한 번 더 눌러 주세요.');
+        }
+        renderResult(finalData);
+        cacheSet(cacheKey, finalData);
+        $('statusLine').textContent = `✅ ${LEVELS[level].name} · ${elapsed()}초 만에 완료`;
+        if (!shown) scrollToResult();
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        showError(err);
+      } finally {
+        if (currentController === controller) {
+          currentController = null;
+          setBusy(false);
+          stopTimer();
+          $('loadingBox').classList.add('hidden');
+        }
+      }
+    }
+
+    // ───────── 화면 도우미 ─────────
+    function setBusy(busy) {
+      const btn = $('generateBtn');
+      btn.disabled = busy;
+      btn.classList.toggle('opacity-60', busy);
+    }
+
+    function elapsed() { return ((Date.now() - startedAt) / 1000).toFixed(1); }
+
+    function startTimer() {
+      stopTimer();
+      startedAt = Date.now();
+      timerId = setInterval(() => {
+        const t = elapsed() + '초';
+        $('loadingTimer').textContent = t;
+        if (!$('resultArea').classList.contains('hidden')) $('statusLine').textContent = `✍️ 작성 중… ${t}`;
+      }, 100);
+    }
+    function stopTimer() { if (timerId) { clearInterval(timerId); timerId = null; } }
+
+    function clearResult() {
+      $('resultArea').classList.add('hidden');
+      $('summaryBox').classList.add('hidden');
+      ['situationSummary', 'parentCards', 'wordChips', 'childCards', 'statusLine'].forEach(id => { $(id).innerHTML = ''; });
+      $('loadingTimer').textContent = '0.0초';
+    }
+
+    function hideError() { $('errorBox').classList.add('hidden'); $('errorBox').textContent = ''; }
+
+    function showError(err) {
+      let msg = err.message || String(err);
+      if (/API key not valid|API_KEY_INVALID/i.test(msg)) msg += '\n→ ⚙️ 설정에서 API 키를 다시 확인해 주세요.';
+      else if (/not found|no longer available|is not supported/i.test(msg)) msg += '\n→ ⚙️ 설정에서 모델 이름을 확인하거나 비워 두세요.';
+      else if (err.status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(msg)) msg += '\n→ 무료 사용량 한도에 걸렸어요. 1분쯤 뒤에 다시 시도해 주세요.';
+      $('errorBox').textContent = '오류: ' + msg;
+      $('errorBox').style.whiteSpace = 'pre-line';
+      $('errorBox').classList.remove('hidden');
+    }
+
+    function scrollToResult() {
+      $('resultArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function showToast(msg) {
+      const toast = $('toast');
+      toast.textContent = msg;
+      toast.classList.remove('hidden');
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => toast.classList.add('hidden'), 2800);
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderResult(data) {
+      $('resultArea').classList.remove('hidden');
+
+      if (data.situation_summary) {
+        $('situationSummary').textContent = data.situation_summary;
+        $('summaryBox').classList.remove('hidden');
+      }
+
+      // 1. 부모 표현 카드
+      $('parentCards').innerHTML = (data.parent_expressions || []).map(item => `
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">${escapeHtml(item.tone)}</span>
+            <div class="flex gap-1.5">
+              <button type="button" data-speak="${escapeHtml(item.english)}" data-rate="1.0" class="text-xs bg-slate-100 active:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg">🔊 1.0x</button>
+              <button type="button" data-speak="${escapeHtml(item.english)}" data-rate="0.8" class="text-xs bg-slate-100 active:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg">🐢 0.8x</button>
+            </div>
+          </div>
+          <p class="text-base font-bold text-slate-900 leading-snug">${escapeHtml(item.english)}</p>
+          <p class="text-xs text-slate-600">${escapeHtml(item.korean)}</p>
+          ${item.pronunciation_tip ? `<p class="text-[11px] text-amber-700 bg-amber-50/80 rounded-lg px-2.5 py-1.5">💡 ${escapeHtml(item.pronunciation_tip)}</p>` : ''}
+        </div>
+      `).join('');
+
+      // 2. 핵심 단어 칩
+      $('wordChips').innerHTML = (data.key_words || []).map(w => `
+        <button type="button" data-speak="${escapeHtml(w.word)}" data-rate="0.9" class="flex items-center gap-1.5 bg-slate-50 active:bg-indigo-50 border border-slate-200 rounded-xl px-3 py-1.5">
+          <span class="text-xs font-bold text-slate-900">🔉 ${escapeHtml(w.word)}</span>
+          <span class="text-xs text-slate-600">${escapeHtml(w.meaning)}</span>
+          ${w.is_ngsl_721 ? '<span class="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">721</span>' : ''}
+        </button>
+      `).join('');
+
+      // 3. 아이 예상 답변 카드
+      $('childCards').innerHTML = (data.child_responses || []).map(c => `
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold text-sky-700 bg-sky-50 px-2.5 py-0.5 rounded-full">${escapeHtml(c.type)}</span>
+              <button type="button" data-speak="${escapeHtml(c.child_english)}" data-rate="0.95" class="text-xs bg-slate-100 active:bg-sky-100 text-slate-700 px-2.5 py-1 rounded-lg">🔊 듣기</button>
+            </div>
+            <p class="text-sm font-bold text-slate-900">"${escapeHtml(c.child_english)}"</p>
+            <p class="text-xs text-slate-500">${escapeHtml(c.child_korean)}</p>
+          </div>
+          ${c.parent_reply_en ? `
+          <div class="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold text-indigo-600">↳ 부모 후속 반응</span>
+              <button type="button" data-speak="${escapeHtml(c.parent_reply_en)}" data-rate="0.95" class="text-[11px] text-indigo-700 font-semibold">🔊 듣기</button>
+            </div>
+            <p class="text-xs font-bold text-slate-800">${escapeHtml(c.parent_reply_en)}</p>
+            <p class="text-[11px] text-slate-500">${escapeHtml(c.parent_reply_ko)}</p>
+          </div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    // 키가 없으면 처음에 설정 창 열기
+    renderScenes();
+    renderLevel();
+    window.addEventListener('load', () => {
+      if (!getKey()) toggleModal(true);
+    });
+  </script>
+</body>
+</html>
 
