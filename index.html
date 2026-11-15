@@ -143,32 +143,14 @@
 
   <script>
     const STORAGE_KEY = 'kids_english_gemini_api_key';
+    let cachedEnglishVoice = null;
 
-    const SYSTEM_INSTRUCTION = `You are a warm, practical bilingual parenting coach helping Korean parents speak natural, easy English with their 7-to-8-year-old child (early elementary level).
-
-When the user provides a situation or Korean phrase they want to say to their child, generate practical English expressions for the parent and 3 likely responses from the child.
-
-[Strict Vocabulary & Grammar Rules]
-1. Core Vocabulary: Primarily use words from the NGSL-Spoken (New General Service List - Spoken) top 721 high-frequency words and basic early-elementary concrete nouns/verbs (e.g., toys, snack, brush teeth, wash hands, homework, YouTube, dinosaur, block).
-2. Simplicity: Keep sentences short (4 to 10 words) using simple structures (e.g., "Let's...", "Can you...", "Time to...", "I want to...", "Do you like...").
-3. Exclusions: Strictly avoid complex idioms, phrasal verbs with abstract meanings, SAT-level vocabulary, or stiff textbook translations.
-4. Natural Tone: Sound like a real, loving parent speaking to a young child in daily life.
-
-[Output Content Requirements]
-1. parent_expressions (3 variations):
-   - "다정한 톤": Warm, encouraging, and soft tone.
-   - "짧고 명확한 톤": Quick, clear, and easy for a child to catch immediately.
-   - "재미있는 톤": Fun or engaging tone that motivates the child.
-2. key_words (3 to 5 words):
-   - Extract the most useful words from your generated sentences.
-   - Indicate whether each word belongs to the NGSL 721 core list (true/false) and provide its Korean meaning in context.
-3. child_responses (3 scenarios):
-   - "긍정적 반응": When the child agrees or responds happily.
-   - "망설임·협상": When the child hesitates, negotiates, or says no.
-   - "엉뚱·호기심": A playful, silly, or question-based reaction typical of a young kid.
-   - For each child response, include a short, natural 1-sentence follow-up reply ("parent_reply_en" and "parent_reply_ko") the parent can say next.
-
-Always respond strictly in valid JSON matching the requested schema. All Korean explanations and translations must be natural and concise.`;
+    const SYSTEM_INSTRUCTION = `You are a bilingual parenting coach helping Korean parents speak easy English with their 7-to-8-year-old child.
+Use primarily NGSL-Spoken top 721 words and basic elementary concrete nouns/verbs (4 to 9 words per sentence). Avoid idioms or hard words.
+Output concise JSON only:
+1. parent_expressions (3 tones: "다정한 톤", "짧고 명확한 톤", "재미있는 톤") with short Korean pronunciation tip.
+2. key_words (3-4 words) with Korean meaning and is_ngsl_721 boolean.
+3. child_responses (3 types: "긍정적 반응", "망설임·협상", "엉뚱·호기심") with child's easy English reply and parent's 1-sentence follow-up.`;
 
     const RESPONSE_SCHEMA = {
       type: "OBJECT",
@@ -216,6 +198,57 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
       },
       required: ["situation_summary", "parent_expressions", "key_words", "child_responses"]
     };
+
+    // 영어 음성 미리 로드
+    function loadEnglishVoice() {
+      if (!('speechSynthesis' in window)) return;
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        cachedEnglishVoice =
+          voices.find(v => v.lang === 'en-US' && (v.name.includes('Samantha') || v.name.includes('Google') || v.name.includes('Natural'))) ||
+          voices.find(v => v.lang.startsWith('en-US')) ||
+          voices.find(v => v.lang.startsWith('en'));
+      }
+    }
+
+    if ('speechSynthesis' in window) {
+      loadEnglishVoice();
+      window.speechSynthesis.onvoiceschanged = loadEnglishVoice;
+    }
+
+    // 모든 스피커 버튼 통합 이벤트 (작은따옴표 오류 완벽 방지)
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-speak]');
+      if (!btn) return;
+      const text = btn.getAttribute('data-speak');
+      const rate = parseFloat(btn.getAttribute('data-rate') || '1.0');
+      speakText(text, rate, btn);
+    });
+
+    function speakText(text, rate = 1.0, btnEl = null) {
+      if (!('speechSynthesis' in window)) {
+        showToast('이 브라우저에서는 음성 듣기를 지원하지 않습니다.');
+        return;
+      }
+
+      if (!cachedEnglishVoice) loadEnglishVoice();
+      window.speechSynthesis.cancel();
+
+      if (btnEl) {
+        btnEl.classList.add('ring-2', 'ring-indigo-400', 'bg-indigo-50');
+        setTimeout(() => btnEl.classList.remove('ring-2', 'ring-indigo-400', 'bg-indigo-50'), 1200);
+      }
+
+      // 모바일 Safari/Chrome에서 cancel 직후 speak 호출 시 씹히는 현상 방지
+      setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        if (cachedEnglishVoice) utterance.voice = cachedEnglishVoice;
+        utterance.rate = rate;
+        utterance.volume = 1.0;
+        window.speechSynthesis.speak(utterance);
+      }, 40);
+    }
 
     // 초기 실행: URL 해시(#key=...)로 공유받은 키 자동 등록
     window.addEventListener('DOMContentLoaded', () => {
@@ -277,18 +310,6 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
     function quickFill(text) {
       document.getElementById('situationInput').value = text;
       generateExpressions();
-    }
-
-    function speakText(text, rate = 1.0) {
-      if (!('speechSynthesis' in window)) {
-        showToast('이 브라우저에서는 음성 듣기를 지원하지 않습니다.');
-        return;
-      }
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      utterance.rate = rate;
-      window.speechSynthesis.speak(utterance);
     }
 
     function startVoiceInput() {
@@ -361,7 +382,8 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
               { role: "user", parts: [{ text: userText }] }
             ],
             generationConfig: {
-              temperature: 0.7,
+              temperature: 0.6,
+              thinkingConfig: { thinkingBudget: 0 },
               responseMimeType: "application/json",
               responseSchema: RESPONSE_SCHEMA
             }
@@ -379,7 +401,7 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
         const parsed = JSON.parse(rawJsonText);
         renderResult(parsed);
       } catch (err) {
-        errorBox.textContent = `오류: ${err.message} (API 키가 올바른지 확인해 주세요.)`;
+        errorBox.textContent = `오류: ${err.message}`;
         errorBox.classList.remove('hidden');
       } finally {
         btn.disabled = false;
@@ -407,8 +429,8 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">${escapeHtml(item.tone)}</span>
             <div class="flex gap-1.5">
-              <button onclick="speakText('${escapeHtml(item.english)}', 1.0)" class="text-xs bg-slate-100 hover:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg font-medium">🔊 1.0x</button>
-              <button onclick="speakText('${escapeHtml(item.english)}', 0.8)" class="text-xs bg-slate-100 hover:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg font-medium">🐢 0.8x</button>
+              <button type="button" data-speak="${escapeHtml(item.english)}" data-rate="1.0" class="text-xs bg-slate-100 active:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg font-medium transition">🔊 1.0x</button>
+              <button type="button" data-speak="${escapeHtml(item.english)}" data-rate="0.8" class="text-xs bg-slate-100 active:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg font-medium transition">🐢 0.8x</button>
             </div>
           </div>
           <p class="text-base font-bold text-slate-900 leading-snug">${escapeHtml(item.english)}</p>
@@ -420,11 +442,11 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
       // 2. 핵심 단어 칩
       const wordChips = document.getElementById('wordChips');
       wordChips.innerHTML = data.key_words.map(w => `
-        <div class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
-          <span class="text-xs font-bold text-slate-900">${escapeHtml(w.word)}</span>
+        <button type="button" data-speak="${escapeHtml(w.word)}" data-rate="0.9" class="flex items-center gap-1.5 bg-slate-50 active:bg-indigo-50 border border-slate-200 rounded-xl px-3 py-1.5 transition">
+          <span class="text-xs font-bold text-slate-900">🔊 ${escapeHtml(w.word)}</span>
           <span class="text-xs text-slate-600">${escapeHtml(w.meaning)}</span>
           ${w.is_ngsl_721 ? '<span class="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">721</span>' : ''}
-        </div>
+        </button>
       `).join('');
 
       // 3. 아이 예상 답변 카드
@@ -434,7 +456,7 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
           <div class="space-y-1.5">
             <div class="flex items-center justify-between">
               <span class="text-[11px] font-bold text-sky-700 bg-sky-50 px-2.5 py-0.5 rounded-full">${escapeHtml(c.type)}</span>
-              <button onclick="speakText('${escapeHtml(c.child_english)}', 0.95)" class="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg font-medium">🔊 아이 발음</button>
+              <button type="button" data-speak="${escapeHtml(c.child_english)}" data-rate="0.95" class="text-xs bg-slate-100 active:bg-indigo-100 text-slate-700 px-2.5 py-1 rounded-lg font-medium transition">🔊 아이 발음</button>
             </div>
             <p class="text-sm font-bold text-slate-900">"${escapeHtml(c.child_english)}"</p>
             <p class="text-xs text-slate-500">${escapeHtml(c.child_korean)}</p>
@@ -443,7 +465,7 @@ Always respond strictly in valid JSON matching the requested schema. All Korean 
           <div class="bg-slate-50 rounded-xl p-3 border border-slate-100 space-y-1">
             <div class="flex items-center justify-between">
               <span class="text-[11px] font-bold text-indigo-600">↳ 부모 후속 반응</span>
-              <button onclick="speakText('${escapeHtml(c.parent_reply_en)}', 0.95)" class="text-[11px] text-indigo-700 font-semibold">🔊 듣기</button>
+              <button type="button" data-speak="${escapeHtml(c.parent_reply_en)}" data-rate="0.95" class="text-[11px] text-indigo-700 font-semibold px-2 py-0.5 rounded">🔊 듣기</button>
             </div>
             <p class="text-xs font-bold text-slate-800">${escapeHtml(c.parent_reply_en)}</p>
             <p class="text-[11px] text-slate-500">${escapeHtml(c.parent_reply_ko)}</p>
